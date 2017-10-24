@@ -63,6 +63,46 @@ ResultSet::operator bool()
 	return m_res != nullptr;
 }
 
+int ResultSet::getInt(const char * key)
+{
+	const char * szValue = getString(key);
+	if (nullptr == szValue)
+	{
+		return 0;
+	}
+	return atoi(szValue);
+}
+
+double ResultSet::getDouble(const char * key)
+{
+	const char * szValue = getString(key);
+	if (nullptr == szValue)
+	{
+		return 0.0;
+	}
+	return atof(szValue);
+}
+
+long long ResultSet::getLongLong(const char * key)
+{
+	const char * szValue = getString(key);
+	if (nullptr == szValue)
+	{
+		return 0LL;
+	}
+	return atoll(szValue);
+}
+
+long ResultSet::getLong(const char * key)
+{
+	const char * szValue = getString(key);
+	if (nullptr == szValue)
+	{
+		return 0L;
+	}
+	return atol(szValue);
+}
+
 bool ResultSet::getKeyIndex(const char * key, unsigned int & index)
 {
 	auto iter = m_keyMap.find(key);
@@ -79,33 +119,32 @@ bool ResultSet::getKeyIndex(const char * key, unsigned int & index)
 
 mysql_connector::mysql_connector(const char *host, const char *user, const char *passwd, const char *db, unsigned int port)
 {
-	binit_mysql_ = false;
-	bconnect_ = false;
+	m_pmysql = nullptr;
+	m_lasttime = 0;
 	if (NULL != host)
 	{
-		host_.assign(host);
+		m_ip.assign(host);
 	}
 	if (NULL != user)
 	{
-		user_.assign(user);
+		m_username.assign(user);
 	}
 	if (NULL != passwd)
 	{
-		passwd_.assign(passwd);
+		m_password.assign(passwd);
 	}
 	if (NULL != db)
 	{
-		db_.assign(db);
+		m_db.assign(db);
 	}
-	port_ = port;
-	time(&m_lasttime);
+	m_port = port;
 }
 
 mysql_connector::~mysql_connector()
 {
-	if (binit_mysql_)
+	if (m_pmysql)
 	{
-		mysql_close(&mysql_);
+		mysql_close(m_pmysql);
 	}
 }
 
@@ -115,42 +154,53 @@ bool mysql_connector::connect()
 	time(&now);
 	if (now - m_lasttime > 1800)
 	{
-		bconnect_ = false;
+		if (m_pmysql)
+		{
+			mysql_close(m_pmysql);
+			m_pmysql = nullptr;
+		}
 	}
-	m_lasttime = now;
-	if (bconnect_)
+	if (m_pmysql)
 	{
+		m_lasttime = now;
 		return true;
 	}
-	if (binit_mysql_)
-	{
-		mysql_close(&mysql_);
-		binit_mysql_ = false;
-	}
-	if (!mysql_init(&mysql_))
+	if (now - m_lasttime < 5)
 	{
 		return false;
 	}
-	binit_mysql_ = true;
-	if (mysql_options(&mysql_, MYSQL_SET_CHARSET_NAME, "utf8"))
+	m_lasttime = now;
+	m_pmysql = mysql_init(nullptr);
+	if (nullptr == m_pmysql)
 	{
+		return false;
+	}
+	if (mysql_options(m_pmysql, MYSQL_SET_CHARSET_NAME, "utf8"))
+	{
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
 	my_bool breconnect = false;
-	if (mysql_options(&mysql_, MYSQL_OPT_RECONNECT, &breconnect))
+	if (mysql_options(m_pmysql, MYSQL_OPT_RECONNECT, &breconnect))
 	{
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
-	if (NULL == mysql_real_connect(&mysql_, host_.c_str(), user_.c_str(), passwd_.c_str(), db_.c_str(), port_, NULL, CLIENT_FOUND_ROWS))
+	if (NULL == mysql_real_connect(m_pmysql, m_ip.c_str(), m_username.c_str(), m_password.c_str(), m_db.c_str(), m_port, NULL, CLIENT_FOUND_ROWS))
 	{
-		MYLOG(g_log, LOGERROR)(mysql_errno(&mysql_))(mysql_error(&mysql_));
+		MYLOG(g_log, LOGERROR)(mysql_errno(m_pmysql))(mysql_error(m_pmysql));
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
-	if (mysql_autocommit(&mysql_, 1))
+	if (mysql_autocommit(m_pmysql, 1))
 	{
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
-	bconnect_ = true;
 	return true;
 }
 
@@ -166,14 +216,15 @@ bool mysql_connector::execute(const char * format, ...)
 	va_start(ap, format);
 	vsnprintf(querySql, sizeof(querySql), format, ap);
 	va_end(ap);
-	int iquery = mysql_query(&mysql_, querySql);
+	int iquery = mysql_query(m_pmysql, querySql);
 	if (iquery != 0)
 	{
-		bconnect_ = false;
-		MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+		MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))(querySql);
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
-	MYSQL_RES * pres = mysql_store_result(&mysql_);
+	MYSQL_RES * pres = mysql_store_result(m_pmysql);
 	if (pres != nullptr)
 	{
 		mysql_free_result(pres);
@@ -181,11 +232,12 @@ bool mysql_connector::execute(const char * format, ...)
 	}
 	else
 	{
-		unsigned int fields = mysql_field_count(&mysql_);
+		unsigned int fields = mysql_field_count(m_pmysql);
 		if (fields != 0)
 		{
-			bconnect_ = false;
-			MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+			MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))(querySql);
+			mysql_close(m_pmysql);
+			m_pmysql = nullptr;
 			return false;
 		}
 		else
@@ -206,32 +258,36 @@ bool mysql_connector::executeUpdate(my_ulonglong & updateRow, const char * forma
 	va_start(ap, format);
 	vsnprintf(querySql, sizeof(querySql), format, ap);
 	va_end(ap);
-	int iquery = mysql_query(&mysql_, querySql);
+	int iquery = mysql_query(m_pmysql, querySql);
 	if (iquery != 0)
 	{
-		bconnect_ = false;
-		MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+		MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))(querySql);
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
-	MYSQL_RES * pres = mysql_store_result(&mysql_);
+	MYSQL_RES * pres = mysql_store_result(m_pmysql);
 	if (pres != nullptr)
 	{
 		mysql_free_result(pres);
-		MYLOG(g_log, LOGERROR)(querySql);
+		MYLOG(g_log, LOGERROR)("not a update statement")(querySql);
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return false;
 	}
 	else
 	{
-		unsigned int fields = mysql_field_count(&mysql_);
+		unsigned int fields = mysql_field_count(m_pmysql);
 		if (fields != 0)
 		{
-			bconnect_ = false;
-			MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+			MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))("not a update statement")(querySql);
+			mysql_close(m_pmysql);
+			m_pmysql = nullptr;
 			return false;
 		}
 		else
 		{
-			updateRow = mysql_affected_rows(&mysql_);
+			updateRow = mysql_affected_rows(m_pmysql);
 			return true;
 		}
 	}
@@ -248,29 +304,33 @@ ResultSet mysql_connector::executeQuery(const char * format, ...)
 	va_start(ap, format);
 	vsnprintf(querySql, sizeof(querySql), format, ap);
 	va_end(ap);
-	int iquery = mysql_query(&mysql_, querySql);
+	int iquery = mysql_query(m_pmysql, querySql);
 	if (iquery != 0)
 	{
-		bconnect_ = false;
-		MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+		MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))(querySql);
+		mysql_close(m_pmysql);
+		m_pmysql = nullptr;
 		return ResultSet(nullptr);
 	}
-	MYSQL_RES * pres = mysql_store_result(&mysql_);
+	MYSQL_RES * pres = mysql_store_result(m_pmysql);
 	if (pres != nullptr)
 	{
 		return ResultSet(pres);
 	}
 	else
 	{
-		unsigned int fields = mysql_field_count(&mysql_);
+		unsigned int fields = mysql_field_count(m_pmysql);
 		if (fields != 0)
 		{
-			bconnect_ = false;
-			MYLOG(g_log, LOGERROR)(mysql_error(&mysql_))(querySql);
+			MYLOG(g_log, LOGERROR)(mysql_error(m_pmysql))(querySql);
+			mysql_close(m_pmysql);
+			m_pmysql = nullptr;
 		}
 		else
 		{
 			MYLOG(g_log, LOGERROR)("not a query statement")(querySql);
+			mysql_close(m_pmysql);
+			m_pmysql = nullptr;
 		}
 		return ResultSet(nullptr);
 	}
@@ -278,5 +338,5 @@ ResultSet mysql_connector::executeQuery(const char * format, ...)
 
 my_ulonglong mysql_connector::getInsertId()
 {
-	return mysql_insert_id(&mysql_);
+	return mysql_insert_id(m_pmysql);
 }

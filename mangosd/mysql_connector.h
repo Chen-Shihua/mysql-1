@@ -16,6 +16,10 @@ public:
 	bool next();
 	const char * getString(const char * key);
 	operator bool();
+	int getInt(const char * key);
+	double getDouble(const char * key);
+	long long getLongLong(const char * key);
+	long getLong(const char * key);
 protected:
 	bool getKeyIndex(const char * key, unsigned int & index);
 private:
@@ -36,14 +40,12 @@ public:
 protected:
     bool connect();
 private:
-    MYSQL mysql_;
-    bool binit_mysql_;
-    std::string host_;
-    std::string user_;
-    std::string passwd_;
-    std::string db_;
-    unsigned int port_;
-    bool bconnect_;
+	MYSQL * m_pmysql;
+	std::string m_ip;
+	std::string m_username;
+	std::string m_password;
+	std::string m_db;
+	unsigned int m_port;
 	time_t m_lasttime;
 };
 #endif // PSL_MYSQL_CONNECTOR_H_
