@@ -33,6 +33,9 @@ class mysql_connector
 public:
     mysql_connector(const char * host, const char * user, const char * passwd, const char *db, unsigned int port);
     ~mysql_connector();
+	bool start();
+	bool commit();
+	void rollback();
 	bool execute(const char * format, ...);
 	bool executeUpdate(my_ulonglong & updateRow, const char * format, ...);
 	ResultSet executeQuery(const char * format, ...);
@@ -47,6 +50,7 @@ private:
 	std::string m_db;
 	unsigned int m_port;
 	time_t m_lasttime;
+	bool m_transacting;
 };
 #endif // PSL_MYSQL_CONNECTOR_H_
 

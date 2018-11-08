@@ -138,6 +138,7 @@ mysql_connector::mysql_connector(const char *host, const char *user, const char 
 		m_db.assign(db);
 	}
 	m_port = port;
+	m_transacting = false;
 }
 
 mysql_connector::~mysql_connector()
@@ -148,8 +149,35 @@ mysql_connector::~mysql_connector()
 	}
 }
 
+bool mysql_connector::start()
+{
+	if (!execute("start transaction")) {
+		return false;
+	}
+	m_transacting = true;
+	return true;
+}
+
+bool mysql_connector::commit()
+{
+	bool e = execute("commit");
+	m_transacting = false;
+	return e;
+}
+
+void mysql_connector::rollback()
+{
+	if (m_pmysql) {
+		execute("rollback");
+	}
+	m_transacting = false;
+}
+
 bool mysql_connector::connect()
 {
+	if (m_transacting) {
+		return true;
+	}
 	time_t now;
 	time(&now);
 	if (now - m_lasttime > 1800)
